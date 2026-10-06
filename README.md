@@ -1,2 +1,23 @@
 # github-tooling
-Reusable GitHub Actions and workflows shared across Stacklet repositories
+
+Reusable GitHub Actions and workflows shared across Stacklet repositories.
+
+Each tool lives in its own top-level directory with an `action.yml` and a `README.md`. Reference one by path:
+
+```yaml
+- uses: stacklet/github-tooling/<tool>@<commit-sha>
+```
+
+Pin by commit SHA. This repository publishes no release tags, so a SHA is the only reference that cannot move.
+
+## Tools
+
+| Tool | Purpose |
+| --- | --- |
+| [validate-min-terraform](validate-min-terraform/) | Runs `terraform validate` at the oldest release a module's `required_version` allows. |
+
+## Adding a tool
+
+1. Create a directory named for the tool.
+2. Add an `action.yml` and a `README.md` covering usage, inputs, and outputs.
+3. Add a row to the table above.

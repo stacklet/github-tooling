@@ -1,0 +1,107 @@
+name: Validate the declared Terraform floor
+description: >-
+  Reads the Terraform floor out of a module's required_version and runs
+  terraform validate at that release.
+
+inputs:
+  working-directory:
+    description: Directory holding the Terraform module to validate.
+    required: false
+    default: .
+  terraform-docs-image:
+    description: >-
+      Image used to parse the configuration. Pin by digest, not by tag.
+    required: false
+    # terraform-docs publishes no immutable releases, which leaves both a tag
+    # and a release checksum able to change underneath us. A digest is content
+    # addressed, so it cannot. This one is terraform-docs 0.20.0.
+    default: quay.io/terraform-docs/terraform-docs@sha256:37329e2dc2518e7f719a986a3954b10771c3fe000f50f83fd4d98d489df2eae2
+
+outputs:
+  version:
+    description: The Terraform release the module declares as its floor.
+    value: ${{ steps.floor.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    # The floor is read out of required_version rather than passed in, so that
+    # editing the constraint moves what CI tests in the same commit.
+    # terraform-docs parses the configuration instead of matching a regex
+    # against one file, so it reports every required_version in the module,
+    # including one in a .tf.json or split across lines.
+    - name: Read the declared Terraform floor
+      id: floor
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TERRAFORM_DOCS_IMAGE: ${{ inputs.terraform-docs-image }}
+      run: |
+        # terraform-docs writes its own diagnostics to stderr, and merging those
+        # into the pipe below breaks the JSON parse. They are kept aside rather
+        # than discarded so that a failed pull or a parse error still says what
+        # went wrong instead of surfacing as empty output.
+        stderr=$(mktemp)
+        if ! parsed=$(docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/wd" -w /wd \
+          "$TERRAFORM_DOCS_IMAGE" json . --output-file '' 2>"$stderr"); then
+          echo "terraform-docs could not read this module:" >&2
+          cat "$stderr" >&2
+          exit 1
+        fi
+        constraints=$(printf '%s' "$parsed" \
+          | jq -r '.requirements[] | select(.name == "terraform") | .version')
+        if [ -z "$constraints" ]; then
+          echo "this module declares no required_version" >&2
+          exit 1
+        fi
+
+        # Terraform applies every required_version in the module at once, so the
+        # effective floor is the highest lower bound among them. Only >= and ~>
+        # state that bound literally, and an operator such as != or = can rule
+        # out the bound another term states. Resolving either needs the release
+        # list, so reject what this cannot read rather than guess at it.
+        bounds=""
+        while IFS= read -r term; do
+          term=$(printf '%s' "$term" | tr -d '[:space:]')
+          [ -n "$term" ] || continue
+          case "$term" in
+            '>='*|'~>'*) bound=${term#??} ;;
+            # An upper bound cannot move the floor, so it needs no reading.
+            '<'*) continue ;;
+            *)
+              echo "cannot resolve a Terraform floor from: $term" >&2
+              echo "required_version may use >=, ~>, < and <= only" >&2
+              exit 1
+              ;;
+          esac
+          if ! printf '%s' "$bound" | grep -qE '^[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+            echo "not a version this can resolve: $term" >&2
+            exit 1
+          fi
+          case "$bound" in *.*.*) ;; *) bound="$bound.0" ;; esac
+          bounds=$(printf '%s\n%s' "$bounds" "$bound")
+        done <<EOF
+        $(printf '%s' "$constraints" | tr ',' '\n')
+        EOF
+
+        # grep exits non-zero on no match, which under -e would end the step
+        # before the message below gets to say why.
+        floor=$(printf '%s' "$bounds" | grep -v '^$' | sort -V | tail -1) || true
+        if [ -z "$floor" ]; then
+          echo "required_version states no lower bound; found:" >&2
+          printf '  %s\n' "$constraints" >&2
+          exit 1
+        fi
+        echo "version=$floor" >> "$GITHUB_OUTPUT"
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+      with:
+        terraform_version: ${{ steps.floor.outputs.version }}
+
+    - name: Validate at the declared floor
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        terraform init -backend=false
+        terraform validate
