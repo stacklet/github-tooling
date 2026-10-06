@@ -28,7 +28,7 @@ runs:
     # The floor is read out of required_version rather than passed in, so that
     # editing the constraint moves what CI tests in the same commit.
     # terraform-docs parses the configuration instead of matching a regex
-    # against one file, so it reports every required_version in the module,
+    # against one file, so it reports every required_version in the directory,
     # including one in a .tf.json or split across lines.
     - name: Read the declared Terraform floor
       id: floor
@@ -42,8 +42,10 @@ runs:
         # than discarded so that a failed pull or a parse error still says what
         # went wrong instead of surfacing as empty output.
         stderr=$(mktemp)
+        trap 'rm -f "$stderr"' EXIT
         if ! parsed=$(docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/wd" -w /wd \
-          "$TERRAFORM_DOCS_IMAGE" json . --output-file '' 2>"$stderr"); then
+          "$TERRAFORM_DOCS_IMAGE" json . --output-file '' --show requirements \
+          2>"$stderr"); then
           echo "terraform-docs could not read this module:" >&2
           cat "$stderr" >&2
           exit 1
@@ -74,11 +76,17 @@ runs:
               exit 1
               ;;
           esac
-          if ! printf '%s' "$bound" | grep -qE '^[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+          if ! printf '%s' "$bound" | grep -qE '^[0-9]+(\.[0-9]+){0,2}$'; then
             echo "not a version this can resolve: $term" >&2
             exit 1
           fi
-          case "$bound" in *.*.*) ;; *) bound="$bound.0" ;; esac
+          # Terraform reads a short bound as the lowest release matching it, so
+          # >= 1 means 1.0.0 and setup-terraform needs all three components.
+          case "$bound" in
+            *.*.*) ;;
+            *.*) bound="$bound.0" ;;
+            *) bound="$bound.0.0" ;;
+          esac
           bounds=$(printf '%s\n%s' "$bounds" "$bound")
         done <<EOF
         $(printf '%s' "$constraints" | tr ',' '\n')
@@ -89,7 +97,7 @@ runs:
         floor=$(printf '%s' "$bounds" | grep -v '^$' | sort -V | tail -1) || true
         if [ -z "$floor" ]; then
           echo "required_version states no lower bound; found:" >&2
-          printf '  %s\n' "$constraints" >&2
+          printf '%s\n' "$constraints" | sed 's/^/  /' >&2
           exit 1
         fi
         echo "version=$floor" >> "$GITHUB_OUTPUT"

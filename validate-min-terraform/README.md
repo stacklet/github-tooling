@@ -36,13 +36,23 @@ jobs:
 
 ## How the floor is derived
 
-`terraform-docs` parses the configuration and reports every `required_version` in the module. Terraform applies all of them at once, so the effective floor is the highest lower bound among them. Only `>=` and `~>` state that bound literally, and `<` and `<=` cannot move it.
+`terraform-docs` parses the configuration and reports every `required_version` in the directory. Terraform applies all of them at once, so the effective floor is the highest lower bound among them. Only `>=` and `~>` state that bound literally, and `<` and `<=` cannot move it.
 
-The action fails rather than guessing on anything else. A constraint with no lower bound has no floor to test, and an operator such as `!=` or `=` can rule out the bound another term states, which would otherwise install a release the module excludes.
+The action fails rather than guessing on anything else:
+
+- A constraint with no lower bound, such as `< 2.0.0` alone, names no floor to test.
+- `!=` and `=` can rule out the bound another term states, which would otherwise install a release the module excludes.
+- `>` is exclusive, so it states no release to install. Write `>= 1.14.1` rather than `> 1.14.0`.
+
+The action reads one directory. A repository with modules in subdirectories needs one call per directory, which a matrix over `working-directory` covers.
 
 Running a real parser matters. A regex over `*.tf` misses a constraint in a `.tf.json`, misses a second `.tf` file, and reads a constraint split across lines as empty, which several published actions then treat as "any version".
 
 The terraform-docs image is pinned by digest because the project publishes no immutable releases, so both a tag and a release checksum can change underneath us. Bumping the version means bumping the digest in `action.yml`.
+
+## Requirements
+
+The runner needs Docker, since the parse runs in a container. `ubuntu-latest` has it; the macOS runners do not.
 
 ## Known limitation
 
