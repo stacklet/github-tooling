@@ -49,7 +49,7 @@ runs:
         TERRAFORM_DOCS_IMAGE: ${{ inputs.terraform-docs-image }}
         MINIMUM_FLOOR: ${{ inputs.minimum-floor }}
       run: |
-        floor=$("$GITHUB_ACTION_PATH/read-floor.sh")
+        floor=$("$GITHUB_ACTION_PATH/read_floor.py")
         echo "version=$floor" >> "$GITHUB_OUTPUT"
 
     - name: Setup Terraform

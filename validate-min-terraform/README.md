@@ -61,11 +61,11 @@ Two things this does not solve. A pull request still chooses which providers `in
 
 ## Requirements
 
-The runner needs Docker, since the parse runs in a container. `ubuntu-latest` has it; the macOS runners do not.
+The runner needs Docker, since the parse runs in a container, and `python3`, which reads the result. `ubuntu-latest` has both. The macOS runners have no Docker.
 
 ## Tests
 
-`just test` runs `validate-min-terraform/test-read-floor.sh`, which exercises the floor derivation against generated modules and the fixtures under `testdata/`. CI runs the same script. Add a case there for any constraint form the parser learns to read or to reject.
+`just test` runs `test_read_floor.py`, and CI runs the same command. The constraint cases call the parser directly and need no container, so adding one for a constraint form the parser learns to read or to reject costs nothing. Only the cases that turn on what terraform-docs reports run the script end to end, against the fixtures under `testdata/`.
 
 ## Known limitation
 

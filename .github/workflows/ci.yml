@@ -39,4 +39,4 @@ jobs:
           persist-credentials: false
 
       - name: Run the tests
-        run: ./validate-min-terraform/test-read-floor.sh
+        run: python3 -m unittest discover -s validate-min-terraform -p 'test_*.py'

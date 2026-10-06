@@ -4,4 +4,4 @@ lint:
 
 # run the tests
 test:
-    ./validate-min-terraform/test-read-floor.sh
+    python3 -m unittest discover -s validate-min-terraform -p 'test_*.py'

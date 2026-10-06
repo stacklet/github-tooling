@@ -20,5 +20,5 @@ Pin by commit SHA. This repository publishes no release tags, so a SHA is the on
 
 1. Create a directory named for the tool.
 2. Add an `action.yml` and a `README.md` covering usage, inputs, and outputs.
-3. Keep any non-trivial shell in its own script beside the `action.yml`, so that shellcheck reads it and a test can run it without a runner.
+3. Keep any non-trivial logic in its own script beside the `action.yml`, so that a linter reads it and a test can run it without a runner. Prefer Python over shell for anything that parses or compares.
 4. Add a row to the table above.
