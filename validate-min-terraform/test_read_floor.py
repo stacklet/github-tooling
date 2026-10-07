@@ -94,10 +94,16 @@ class ReadFloorScriptTest(unittest.TestCase):
         )
 
     def test_several_files_in_one_directory(self):
-        """A constraint in a .tf.json, and one split across lines, both count."""
+        """The highest bound wins, and here it is the one in the .tf.json."""
         result = self.run_script(HERE / "testdata" / "several-files")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "1.99.0")
+
+    def test_a_constraint_split_across_lines_decides(self):
+        """The multiline form is the one a regex over the file reads as empty."""
+        result = self.run_script(HERE / "testdata" / "multiline-constraint")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "1.14.0")
 
     def test_a_config_hiding_requirements(self):
         """A module that declares a constraint must not look like one that does not."""

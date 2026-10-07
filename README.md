@@ -14,7 +14,7 @@ Pin by commit SHA. This repository publishes no release tags, so a SHA is the on
 
 | Tool | Purpose |
 | --- | --- |
-| [validate-min-terraform](validate-min-terraform/) | Runs `terraform validate` at the oldest release a module's `required_version` allows. |
+| [validate-min-terraform](validate-min-terraform/) | Runs `terraform validate` at the floor a module's `required_version` declares, and fails when that floor is below a configured minimum. |
 
 ## Adding a tool
 

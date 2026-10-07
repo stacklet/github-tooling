@@ -43,7 +43,7 @@ The action fails rather than guessing on anything else:
 
 - A constraint with no lower bound, such as `< 2.0.0` alone, names no floor to test.
 - `!=` and `=` can rule out the bound another term states, which would otherwise install a release the module excludes.
-- `>` is exclusive, so it states no release to install. Write `>= 1.14.1` rather than `> 1.14.0`.
+- `>` is exclusive, so it names no release to install, even though it permits everything above the one it names. Use the inclusive form with a real release: `>= 1.14.1` rather than `> 1.14.0`.
 
 The action reads one directory. A repository with modules in subdirectories needs one call per directory, which a matrix over `working-directory` covers.
 
