@@ -48,9 +48,10 @@ runners have no Docker.
 ## Version constraints
 
 `required_version` must state a lower bound with `>=`, `~>` or `=`, or name an
-exact version such as `1.14.0`. Upper bounds are allowed and ignored. The action
-rejects any constraint it cannot resolve to a definite release, and fails when
-the floor it resolves falls below `minimum-floor`.
+exact version such as `1.14.0`. Upper bounds are allowed and ignored, as is
+`!=` unless it excludes the floor itself. The action rejects any constraint it
+cannot resolve to a definite release, and fails when the floor it resolves
+falls below `minimum-floor`.
 
 Every `required_version` in the directory counts, including one in a `.tf.json`
 or split across lines. The floor is the highest lower bound among them, which

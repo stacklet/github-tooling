@@ -13,11 +13,12 @@ import subprocess
 import sys
 
 # >=, ~> and = state a lower bound literally, as does a bare version, which
-# Terraform reads as an exact pin. < and <= cannot move the floor. Anything else
-# either states no bound at all or can rule out the bound another term states,
-# and resolving that needs the release list.
+# Terraform reads as an exact pin. < and <= cannot move the floor, and != only
+# matters when it removes the floor another term states. Anything else needs the
+# release list to resolve, which this does not read.
 LOWER_BOUND = re.compile(r"^(?:>=|~>|=)?\s*(\d+(?:\.\d+){0,2})$")
 UPPER_BOUND = re.compile(r"^<=?\s*\S+$")
+EXCLUSION = re.compile(r"^!=\s*(\d+(?:\.\d+){0,2})$")
 
 
 class FloorError(Exception):
@@ -38,21 +39,27 @@ def format_version(version):
     return ".".join(str(part) for part in version)
 
 
-def lower_bounds(constraints):
-    """Yield the lower bound stated by each term of each constraint."""
+def read_terms(constraints):
+    """Return the lower bounds stated across every constraint, and the exclusions."""
+    bounds = []
+    excluded = set()
     for constraint in constraints:
         for term in constraint.split(","):
             term = term.strip()
             if not term:
                 continue
-            match = LOWER_BOUND.match(term)
-            if match:
-                yield parse_version(match.group(1))
+            bound = LOWER_BOUND.match(term)
+            exclusion = EXCLUSION.match(term)
+            if bound:
+                bounds.append(parse_version(bound.group(1)))
+            elif exclusion:
+                excluded.add(parse_version(exclusion.group(1)))
             elif not UPPER_BOUND.match(term):
                 raise FloorError(
                     f"cannot resolve a Terraform floor from: {term}\n"
-                    "required_version may use >=, ~>, =, < and <= only"
+                    "required_version may use >=, ~>, =, !=, < and <= only"
                 )
+    return bounds, excluded
 
 
 def derive_floor(constraints, minimum):
@@ -64,12 +71,18 @@ def derive_floor(constraints, minimum):
     if not constraints:
         raise FloorError("this module declares no required_version")
 
-    bounds = list(lower_bounds(constraints))
+    bounds, excluded = read_terms(constraints)
     if not bounds:
         found = "\n".join(f"  {constraint}" for constraint in constraints)
         raise FloorError(f"required_version states no lower bound; found:\n{found}")
 
     floor = max(bounds)
+    if floor in excluded:
+        raise FloorError(
+            f"required_version excludes {format_version(floor)}, the floor it "
+            "states. Resolving the next release above it needs the release list."
+        )
+
     # The floor comes out of the configuration under test, and on a pull request
     # that configuration is whatever the pull request says. Without a clamp the
     # branch picks which Terraform release CI runs, which is a way to reach an
