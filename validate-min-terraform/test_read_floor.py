@@ -32,6 +32,12 @@ RESOLVES = [
     ([">= 1.15.0"], "1.15.0"),
     # Terraform applies every constraint in the directory at once.
     ([">= 1.99.0", ">= 1.2.0", ">= 1.14.0"], "1.99.0"),
+    # An exact pin states its own floor, alone or beside a lower bound.
+    (["= 1.14.0"], "1.14.0"),
+    (["=1.15.0"], "1.15.0"),
+    ([">= 1.14.0, = 1.15.0"], "1.15.0"),
+    # Terraform reads a bare version as an exact pin.
+    (["1.14.0"], "1.14.0"),
     # A short bound is the lowest release matching it.
     ([">= 1"], "1.0.0"),
     (["~> 1"], "1.0.0"),
@@ -42,9 +48,7 @@ REJECTS = [
     (["< 2.0.0"], "states no lower bound"),
     (["<= 2.0.0"], "states no lower bound"),
     # An operator that can rule out the bound another term states.
-    (["1.14.0"], "cannot resolve"),
     ([">= 1.14.0, != 1.14.0"], "cannot resolve"),
-    ([">= 1.14.0, = 1.15.0"], "cannot resolve"),
     # Exclusive, so it names no release to install.
     (["> 1.14.0"], "cannot resolve"),
     ([">= 1.14.0-beta1"], "cannot resolve"),

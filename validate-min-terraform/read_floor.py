@@ -12,10 +12,11 @@ import shlex
 import subprocess
 import sys
 
-# >= and ~> are the only operators that state a lower bound literally. < and <=
-# cannot move the floor. Anything else either states no bound at all or can rule
-# out the bound another term states, and resolving that needs the release list.
-LOWER_BOUND = re.compile(r"^(?:>=|~>)\s*(\d+(?:\.\d+){0,2})$")
+# >=, ~> and = state a lower bound literally, as does a bare version, which
+# Terraform reads as an exact pin. < and <= cannot move the floor. Anything else
+# either states no bound at all or can rule out the bound another term states,
+# and resolving that needs the release list.
+LOWER_BOUND = re.compile(r"^(?:>=|~>|=)?\s*(\d+(?:\.\d+){0,2})$")
 UPPER_BOUND = re.compile(r"^<=?\s*\S+$")
 
 
@@ -50,7 +51,7 @@ def lower_bounds(constraints):
             elif not UPPER_BOUND.match(term):
                 raise FloorError(
                     f"cannot resolve a Terraform floor from: {term}\n"
-                    "required_version may use >=, ~>, < and <= only"
+                    "required_version may use >=, ~>, =, < and <= only"
                 )
 
 
