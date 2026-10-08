@@ -8,6 +8,7 @@ passed in, so that editing a constraint moves what CI tests in the same commit.
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -89,26 +90,12 @@ def read_constraints(image, directory):
     into the mounted directory under a config-supplied output.file.
     """
     result = subprocess.run(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--network",
-            "none",
-            "-u",
-            f"{os.getuid()}:{os.getgid()}",
-            "-v",
-            f"{directory}:/wd:ro",
-            "-w",
-            "/wd",
-            image,
-            "json",
-            ".",
-            "--output-file",
-            "",
-            "--show",
-            "requirements",
-        ],
+        shlex.split(
+            "docker run --rm --network none"
+            f" -u {os.getuid()}:{os.getgid()}"
+            f" -v {shlex.quote(f'{directory}:/wd:ro')} -w /wd {shlex.quote(image)}"
+            " json . --output-file '' --show requirements"
+        ),
         capture_output=True,
         text=True,
         check=False,
@@ -130,10 +117,19 @@ def main():
     minimum = parse_version(os.environ["MINIMUM_FLOOR"])
     try:
         constraints = read_constraints(image, os.getcwd())
-        print(format_version(derive_floor(constraints, minimum)))
+        floor = format_version(derive_floor(constraints, minimum))
     except FloorError as error:
         print(error, file=sys.stderr)
         return 1
+
+    print(floor)
+    # This keeps the shell logic out of the action. Outside a workflow the
+    # variable is unset and stdout carries the whole result, which is what the
+    # tests read.
+    output = os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with open(output, "a") as handle:
+            handle.write(f"version={floor}\n")
     return 0
 
 

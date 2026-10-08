@@ -10,12 +10,13 @@ import os
 import pathlib
 import re
 import subprocess
+import tempfile
 import unittest
 
 import read_floor
 
 HERE = pathlib.Path(__file__).parent
-DEFAULT_MINIMUM = (1, 2, 2)
+DEFAULT_MINIMUM = (1, 14, 0)
 
 # The image the action defaults to, so the tests and the action cannot drift.
 IMAGE = os.environ.get("TERRAFORM_DOCS_IMAGE") or re.search(
@@ -28,7 +29,7 @@ RESOLVES = [
     ([">= 1.14.0, < 2.0.0"], "1.14.0"),
     (["~> 1.14"], "1.14.0"),
     ([">= 1.9, >= 1.14.0, < 2.0.0"], "1.14.0"),
-    ([">= 1.2.2"], "1.2.2"),
+    ([">= 1.15.0"], "1.15.0"),
     # Terraform applies every constraint in the directory at once.
     ([">= 1.99.0", ">= 1.2.0", ">= 1.14.0"], "1.99.0"),
     # A short bound is the lowest release matching it.
@@ -68,18 +69,18 @@ class DeriveFloorTest(unittest.TestCase):
 
     def test_a_floor_below_the_minimum_is_refused(self):
         with self.assertRaises(read_floor.FloorError) as caught:
-            read_floor.derive_floor([">= 1.1.0"], DEFAULT_MINIMUM)
+            read_floor.derive_floor([">= 1.13.0"], DEFAULT_MINIMUM)
         self.assertIn("below the minimum", str(caught.exception))
 
     def test_the_minimum_itself_is_allowed(self):
-        floor = read_floor.derive_floor([">= 1.2.2"], DEFAULT_MINIMUM)
+        floor = read_floor.derive_floor([">= 1.14.0"], DEFAULT_MINIMUM)
         self.assertEqual(floor, DEFAULT_MINIMUM)
 
 
 class ReadFloorScriptTest(unittest.TestCase):
     """End to end, including the terraform-docs run. These need Docker."""
 
-    def run_script(self, directory, minimum="1.2.2"):
+    def run_script(self, directory, minimum="1.14.0", output=None):
         return subprocess.run(
             [str(HERE / "read_floor.py")],
             cwd=directory,
@@ -90,8 +91,20 @@ class ReadFloorScriptTest(unittest.TestCase):
                 **os.environ,
                 "TERRAFORM_DOCS_IMAGE": IMAGE,
                 "MINIMUM_FLOOR": minimum,
+                **({"GITHUB_OUTPUT": str(output)} if output else {}),
             },
         )
+
+    def test_it_writes_the_step_output(self):
+        """The action reads the floor from GITHUB_OUTPUT, not from stdout."""
+        with tempfile.TemporaryDirectory() as work:
+            output = pathlib.Path(work) / "output"
+            output.touch()
+            result = self.run_script(
+                HERE / "testdata" / "multiline-constraint", output=output
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(output.read_text(), "version=1.14.0\n")
 
     def test_several_files_in_one_directory(self):
         """The highest bound wins, and here it is the one in the .tf.json."""
@@ -111,6 +124,13 @@ class ReadFloorScriptTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "1.14.0")
 
+    def test_a_floor_below_the_minimum_is_refused(self):
+        result = self.run_script(
+            HERE / "testdata" / "multiline-constraint", minimum="1.15.0"
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("below the minimum", result.stderr)
+
     def test_no_required_version(self):
         result = self.run_script(HERE / "testdata" / "no-constraint")
         self.assertEqual(result.returncode, 1)
@@ -128,7 +148,7 @@ class ReadFloorScriptTest(unittest.TestCase):
             env={
                 **os.environ,
                 "TERRAFORM_DOCS_IMAGE": "quay.io/terraform-docs/terraform-docs:no-such-tag",
-                "MINIMUM_FLOOR": "1.2.2",
+                "MINIMUM_FLOOR": "1.14.0",
             },
         )
         self.assertEqual(broken.returncode, 1)

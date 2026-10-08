@@ -34,8 +34,8 @@ jobs:
           prek-version: ${{ env.PREK_TOOL_VERSION }}
         env:
           # zizmor's five online audits skip silently without a token, and its
-          # summary line reads the same either way, so CI would look green with
-          # the supply-chain audits never having run.
+          # summary line reads the same either way, so CI would pass while the
+          # supply-chain audits never ran.
           GH_TOKEN: ${{ github.token }}
 
   test:
