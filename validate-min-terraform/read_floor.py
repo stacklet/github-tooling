@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""Print the oldest Terraform release the module in the working directory supports.
+
+The floor is read out of the module's required_version constraints rather than
+passed in, so that editing a constraint moves what CI tests in the same commit.
+"""
+
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+
+# >=, ~> and = state a lower bound literally, as does a bare version, which
+# Terraform reads as an exact pin. < and <= cannot move the floor, and != only
+# matters when it removes the floor another term states. Anything else needs the
+# release list to resolve, which this does not read.
+LOWER_BOUND = re.compile(r"^(?:>=|~>|=)?\s*(\d+(?:\.\d+){0,2})$")
+UPPER_BOUND = re.compile(r"^<=?\s*\S+$")
+EXCLUSION = re.compile(r"^!=\s*(\d+(?:\.\d+){0,2})$")
+
+
+class FloorError(Exception):
+    """A constraint this cannot resolve a floor from."""
+
+
+def parse_version(text):
+    """Read a version as a comparable tuple.
+
+    Terraform reads a short bound as the lowest release matching it, so >= 1
+    means 1.0.0.
+    """
+    parts = [int(part) for part in text.split(".")]
+    return tuple(parts + [0] * (3 - len(parts)))
+
+
+def format_version(version):
+    return ".".join(str(part) for part in version)
+
+
+def read_terms(constraints):
+    """Return the lower bounds stated across every constraint, and the exclusions."""
+    bounds = []
+    excluded = set()
+    for constraint in constraints:
+        for term in constraint.split(","):
+            term = term.strip()
+            if not term:
+                continue
+            bound = LOWER_BOUND.match(term)
+            exclusion = EXCLUSION.match(term)
+            if bound:
+                bounds.append(parse_version(bound.group(1)))
+            elif exclusion:
+                excluded.add(parse_version(exclusion.group(1)))
+            elif not UPPER_BOUND.match(term):
+                raise FloorError(
+                    f"cannot resolve a Terraform floor from: {term}\n"
+                    "required_version may use >=, ~>, =, !=, < and <= only"
+                )
+    return bounds, excluded
+
+
+def derive_floor(constraints, minimum):
+    """Return the release to install, given every constraint in the directory.
+
+    Terraform applies all of them at once, so the effective floor is the highest
+    lower bound among them.
+    """
+    if not constraints:
+        raise FloorError("this module declares no required_version")
+
+    bounds, excluded = read_terms(constraints)
+    if not bounds:
+        found = "\n".join(f"  {constraint}" for constraint in constraints)
+        raise FloorError(f"required_version states no lower bound; found:\n{found}")
+
+    floor = max(bounds)
+    if floor in excluded:
+        raise FloorError(
+            f"required_version excludes {format_version(floor)}, the floor it "
+            "states. Resolving the next release above it needs the release list."
+        )
+
+    # The floor comes out of the configuration under test, and on a pull request
+    # that configuration is whatever the pull request says. Without a clamp the
+    # branch picks which Terraform release CI runs, which is a way to reach an
+    # old release for the sake of its bugs rather than for support.
+    if floor < minimum:
+        raise FloorError(
+            f"declared floor {format_version(floor)} is below the minimum "
+            f"this action will run: {format_version(minimum)}"
+        )
+    return floor
+
+
+def read_constraints(image, directory):
+    """Return every Terraform required_version terraform-docs finds in a directory.
+
+    --show overrides a .terraform-docs.yml that hides the requirements section,
+    which would otherwise report a module that declares a constraint as one that
+    declares none. --output-file keeps terraform-docs from writing its render
+    into the mounted directory under a config-supplied output.file.
+    """
+    result = subprocess.run(
+        shlex.split(
+            "docker run --rm --network none"
+            f" -u {os.getuid()}:{os.getgid()}"
+            f" -v {shlex.quote(f'{directory}:/wd:ro')} -w /wd {shlex.quote(image)}"
+            " json . --output-file '' --show requirements"
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise FloorError(
+            f"terraform-docs could not read this module:\n{result.stderr.rstrip()}"
+        )
+    requirements = json.loads(result.stdout).get("requirements") or []
+    return [
+        requirement["version"]
+        for requirement in requirements
+        if requirement.get("name") == "terraform"
+    ]
+
+
+def main():
+    image = os.environ["TERRAFORM_DOCS_IMAGE"]
+    minimum = parse_version(os.environ["MINIMUM_FLOOR"])
+    try:
+        constraints = read_constraints(image, os.getcwd())
+        floor = format_version(derive_floor(constraints, minimum))
+    except FloorError as error:
+        print(error, file=sys.stderr)
+        return 1
+
+    print(floor)
+    # This keeps the shell logic out of the action. Outside a workflow the
+    # variable is unset and stdout carries the whole result, which is what the
+    # tests read.
+    output = os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with open(output, "a") as handle:
+            handle.write(f"version={floor}\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,67 @@
+name: Validate the declared Terraform floor
+description: >-
+  Reads the Terraform floor out of a module's required_version and runs
+  terraform validate at that release.
+
+inputs:
+  working-directory:
+    description: Directory holding the Terraform module to validate.
+    required: false
+    default: .
+  minimum-floor:
+    description: >-
+      Refuse to run below this release. The floor comes out of the
+      configuration under test, so on a pull request the branch decides which
+      Terraform CI installs.
+    required: false
+    # HashiCorp routes a version to a support regime by release date, and 1.14
+    # falls in the band still receiving fixes and security patches, so this is
+    # the oldest release with a published claim to them. It wants revisiting
+    # when a new minor lands. See the README.
+    default: 1.14.0
+  terraform-docs-image:
+    description: >-
+      Image used to parse the configuration. Pin by digest, not by tag.
+    required: false
+    # terraform-docs publishes no immutable releases, which leaves both a tag
+    # and a release checksum able to change underneath us. A digest is content
+    # addressed, so it cannot. This one is terraform-docs 0.20.0, the last
+    # release published as a multi-arch index. Later tags are per-architecture,
+    # so a digest pin would have to choose one.
+    default: quay.io/terraform-docs/terraform-docs@sha256:37329e2dc2518e7f719a986a3954b10771c3fe000f50f83fd4d98d489df2eae2
+
+outputs:
+  version:
+    description: The Terraform release the module declares as its floor.
+    value: ${{ steps.floor.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    # The floor is read out of required_version rather than passed in, so that
+    # editing the constraint moves what CI tests in the same commit.
+    # terraform-docs parses the configuration instead of matching a regex
+    # against one file, so it reports every required_version in the directory,
+    # including one in a .tf.json or split across lines.
+    - name: Read the declared Terraform floor
+      id: floor
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TERRAFORM_DOCS_IMAGE: ${{ inputs.terraform-docs-image }}
+        MINIMUM_FLOOR: ${{ inputs.minimum-floor }}
+      # The script writes the step output itself, so this step carries no shell
+      # logic. A composite step has to name a shell even so.
+      run: '"$GITHUB_ACTION_PATH/read_floor.py"'
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+      with:
+        terraform_version: ${{ steps.floor.outputs.version }}
+
+    - name: Validate at the declared floor
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        terraform init -backend=false -input=false
+        terraform validate

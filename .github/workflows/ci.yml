@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions: {}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set tool versions
+        uses: wistia/parse-tool-versions@32f568a4ffd4bfa7720ebf93f171597d1ebc979a # v2.1.1
+        with:
+          postfix: _TOOL_VERSION
+
+      - uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece # v3.0.0
+        with:
+          # Without a pin this installs whatever prek released most recently,
+          # so a hostile release reaches CI with no change here. The version
+          # comes from .tool-versions, so CI and a local run agree on it.
+          prek-version: ${{ env.PREK_TOOL_VERSION }}
+        env:
+          # zizmor's five online audits skip silently without a token, and its
+          # summary line reads the same either way, so CI would pass while the
+          # supply-chain audits never ran.
+          GH_TOKEN: ${{ github.token }}
+
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run the tests
+        run: python3 -m unittest discover -s validate-min-terraform -p 'test_*.py'
