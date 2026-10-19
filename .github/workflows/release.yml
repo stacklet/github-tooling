@@ -18,10 +18,8 @@ on:
         type: boolean
         default: false
 
-# Two runs would otherwise read the same latest tag and claim the same version.
-# The second fails at the release step rather than corrupting anything, but
-# serialising stops it happening at all. Only one run queues behind the active
-# one, so a third dispatch drops the second.
+# Two runs would otherwise claim the same version. The second fails safely at
+# the release step, but serialising stops it happening at all.
 #
 # This belongs to the dispatched workflow rather than the called one, so every
 # caller carries it. Copy this file rather than writing one.
@@ -33,8 +31,8 @@ jobs:
   release:
     uses: ./.github/workflows/cut-release.yml
     # The ceiling for the called workflow, not what each job gets. It narrows
-    # this to read for the job running the third-party version action, and only
-    # its publish job keeps write.
+    # this to read for the job running the third-party action, and only its
+    # publish job keeps write.
     permissions:
       contents: write
     secrets:
