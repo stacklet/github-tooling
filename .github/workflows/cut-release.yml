@@ -113,9 +113,11 @@ jobs:
 
       # Only fires on the first release, where the baseline is 0.0.0. A patch
       # from there lands v0.0.1 permanently, so this is enforced rather than
-      # left to the input description.
+      # left to the input description. Reads `previous_version` rather than
+      # `previous_tag`, which carries the action's tag prefix and would make
+      # this a second copy of a default owned elsewhere.
       - name: Require the first release to be major
-        if: ${{ steps.version.outputs.previous_tag == 'v0.0.0' && inputs.bump != 'major' }}
+        if: ${{ steps.version.outputs.previous_version == '0.0.0' && inputs.bump != 'major' }}
         env:
           BUMP: ${{ inputs.bump }}
         run: |
@@ -182,28 +184,33 @@ jobs:
           # taken, the release call publishes against whatever commit that tag
           # points at, and immutability makes that permanent.
           #
-          # Claiming first leaves the tag briefly unlocked, and a tag left
+          # Claiming first leaves the tag briefly unlocked, and one left
           # behind makes the next dispatch skip this version number. So the
-          # cleanup is armed before the claim, leaving no window where the tag
-          # is unowned, and it is conditional on the tag being this run's so
-          # that it never deletes one the claim lost to. Anything it cannot
-          # confirm it leaves alone: a stray tag costs a number, a wrong delete
-          # costs a release.
+          # cleanup is armed before the claim, and acts only on a claim that
+          # returned. Ownership is recorded rather than read back off the tag,
+          # because a tag that beat us to the name is almost always at this
+          # same commit: every run targets the default-branch tip.
+          #
+          # What is left is the one statement between the claim landing and
+          # `claimed=1`, and it fails the safe way. A stray tag costs a version
+          # number, a wrong delete costs a release.
           #
           # An EXIT trap covers a cancelled job as well as a failed command,
           # though not a SIGKILL.
+          claimed=0
           cleanup() {
-            local ref_sha releases
-            ref_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq .object.sha 2>/dev/null) || return 0
-            if [ "${ref_sha}" != "${COMMIT}" ]; then
-              return 0
-            fi
-            # Listing answers "no release" with an empty result and a success,
-            # which is what tells a confirmed absence apart from a lookup that
-            # failed. Asking for the release by tag reports both the same way,
-            # and deleting on an unconfirmed absence would strip the tag off a
-            # release that did publish.
-            releases=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
+            [ "${claimed}" = 1 ] || return 0
+            local releases
+            # The release call can land while this run dies before clearing
+            # the trap, so a tag of ours can already be locked. Listing
+            # answers "no release" with an empty result and a success, which
+            # tells a confirmed absence apart from a lookup that failed.
+            # Asking for the release by tag reports both the same way, and
+            # deleting on an unconfirmed absence would strip the tag off a
+            # release that did publish. One page is enough, newest first, and
+            # it keeps this to a bounded number of calls inside whatever
+            # grace period a cancelled job gets.
+            releases=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
               --jq '.[] | select(.tag_name == env.TAG) | .id') || return 0
             if [ -n "${releases}" ]; then
               return 0
@@ -214,6 +221,7 @@ jobs:
           gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
             -f "ref=refs/tags/${TAG}" \
             -f "sha=${COMMIT}" > /dev/null
+          claimed=1
           gh release create "${TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             --target "${COMMIT}" \
