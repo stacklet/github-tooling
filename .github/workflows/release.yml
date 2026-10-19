@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to raise. The first release has to be major, because the count starts from 0.0.0.
+        required: true
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+      dry_run:
+        description: Work out the next version and stop without publishing
+        required: false
+        type: boolean
+        default: false
+
+# Two runs would otherwise read the same latest tag and claim the same version.
+# The second fails at the release step rather than corrupting anything, but
+# serialising stops it happening at all. Only one run queues behind the active
+# one, so a third dispatch drops the second.
+#
+# This belongs to the dispatched workflow rather than the called one, so every
+# caller carries it. Copy this file rather than writing one.
+concurrency: release
+
+permissions: {}
+
+jobs:
+  release:
+    uses: ./.github/workflows/cut-release.yml
+    # The ceiling for the called workflow, not what each job gets. It narrows
+    # this to read for the job running the third-party version action, and only
+    # its publish job keeps write.
+    permissions:
+      contents: write
+    secrets:
+      STEP_SECURITY_API_KEY: ${{ secrets.STEP_SECURITY_API_KEY }}
+    with:
+      bump: ${{ inputs.bump }}
+      dry_run: ${{ inputs.dry_run }}
