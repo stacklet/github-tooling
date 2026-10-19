@@ -1,0 +1,76 @@
+name: "Run script"
+on:
+  workflow_call:
+    inputs:
+      run:
+        description: "Script for the run step"
+        type: string
+        required: true
+      pre-commit-cache:
+        description: "Restore the pre-commit cache, saving it on non-PR events"
+        type: boolean
+        default: false
+      full-git-history:
+        type: boolean
+        description: "Whether to fetch full git history rather than just current HEAD"
+        default: false
+      github-token:
+        type: boolean
+        description: "Expose the job's read-only GitHub token to the script as GH_TOKEN"
+        default: false
+    secrets:
+      STEP_SECURITY_API_KEY:
+        required: false
+permissions: {}
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      HARDEN_RUNNER: ${{ secrets.STEP_SECURITY_API_KEY != '' }} # zizmor: ignore[secrets-outside-env]
+    steps:
+      - name: Harden Runner
+        if: env.HARDEN_RUNNER == 'true'
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          use-policy-store: true
+          api-key: ${{ secrets.STEP_SECURITY_API_KEY }} # zizmor: ignore[secrets-outside-env]
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: ${{ inputs.full-git-history && '0' || '1' }}
+
+      - name: Install mise
+        uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
+        with:
+          minimum_release_age: 7d
+          cache: true
+
+      # Always read the cache, it's safe to do so even on untrusted PRs.
+      - name: Restore pre-commit cache
+        if: inputs.pre-commit-cache
+        id: pre-commit-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Run
+        run: ${{ inputs.run }} # zizmor: ignore[template-injection] caller-provided script
+        env:
+          GH_TOKEN: ${{ inputs.github-token && github.token || '' }}
+          # Point prek at the pre-commit cache path so the cache step covers both.
+          PREK_HOME: ~/.cache/pre-commit
+
+      # Cache ssave is gated to non-PR events: an untrusted PR run must not be
+      # able to write a hook-environment cache that a later trusted build
+      # restores and executes (cache poisoning).
+      - name: Save pre-commit cache
+        if: inputs.pre-commit-cache && github.event_name != 'pull_request' && steps.pre-commit-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: ${{ steps.pre-commit-cache.outputs.cache-primary-key }}
