@@ -49,6 +49,7 @@ jobs:
           minimum_release_age: 7d
           cache: true
 
+      # Always read the cache, it's safe to do so even on untrusted PRs.
       - name: Restore pre-commit cache
         if: inputs.pre-commit-cache
         id: pre-commit-cache
@@ -64,8 +65,8 @@ jobs:
           # Point prek at the pre-commit cache path so the cache step covers both.
           PREK_HOME: ~/.cache/pre-commit
 
-      # Restore-only above, save gated to non-PR events: an untrusted PR run must
-      # not be able to write a hook-environment cache that a later trusted build
+      # Cache ssave is gated to non-PR events: an untrusted PR run must not be
+      # able to write a hook-environment cache that a later trusted build
       # restores and executes (cache poisoning).
       - name: Save pre-commit cache
         if: inputs.pre-commit-cache && github.event_name != 'pull_request' && steps.pre-commit-cache.outputs.cache-hit != 'true'
