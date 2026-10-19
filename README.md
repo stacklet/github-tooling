@@ -94,8 +94,8 @@ jobs:
 ```
 
 The workflow refuses to run against anything but the calling repository's default
-branch, refuses a re-run of a run that already published, and refuses to publish over a
-tag it did not create. The first release has to be a major bump, because the version
+branch, refuses any re-run of a run it has already started, and refuses to publish over
+a tag it did not create. A retry means dispatching again. The first release has to be a major bump, because the version
 walk starts from 0.0.0 and a patch from there spends `v0.0.1` permanently.
 
 `STEP_SECURITY_API_KEY` is optional. Without it the Harden Runner step is skipped and

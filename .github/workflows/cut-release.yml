@@ -91,6 +91,12 @@ jobs:
           github_token: ${{ github.token }}
           force_bump: ${{ inputs.bump }}
           push: false
+          # `release_branches` defaults to `^master$,^main$`, and a branch
+          # outside that list gets a version postfixed with the commit hash
+          # and no tag at all. The guard above already confines this job to
+          # the caller's default branch, so widening it here is what makes
+          # that guard's generality real.
+          release_branches: '.*'
 
       - name: Report the version
         env:
@@ -158,9 +164,6 @@ jobs:
       # so without one of those it exits 1 with "not a git repository". `gh api`
       # is unaffected because its path is literal.
       #
-      # Publishing the release locks the tag, so the tag is created here rather
-      # than by the version job.
-      #
       # zizmor rejects a release action here as work the runner already does,
       # which is why this is the CLI rather than ncipollo/release-action.
       - name: Publish the release
@@ -176,12 +179,9 @@ jobs:
             echo "That should not happen on the default branch with an explicit bump." >&2
             exit 1
           fi
-          # The version job derives the number by incrementing the highest tag,
-          # so the name was free when it ran. A tag pushed from anywhere else
-          # since then still collides, and `gh release create` answers a
-          # collision by releasing the existing tag and ignoring --target, which
-          # publishes an immutable release for a commit nobody chose. This
-          # narrows the window rather than closing it.
+          # This check is for the clean error, not for correctness. The ref
+          # write below is what actually claims the name. Without the check a
+          # collision surfaces as a raw 422 from the API.
           #
           # `git/matching-refs` answers "no such tag" with 200 and an empty
           # array, so a non-zero exit means the check itself failed rather than
@@ -198,8 +198,32 @@ jobs:
             echo "a tag it did not create. Refusing." >&2
             exit 1
           fi
+          # Claiming the name and publishing the release are two calls, so the
+          # order decides which way the gap between them fails. Creating the
+          # tag first fails closed: `POST git/refs` answers an existing ref with
+          # 422, so a tag that lands after the check above costs this run and
+          # nothing else.
+          #
+          # Letting `gh release create` make the tag instead fails open. It
+          # answers a name that is already taken by releasing the tag that is
+          # there and ignoring --target, which publishes an immutable release
+          # against a commit nobody chose. Immutability makes the name
+          # unusable afterwards even if the release is deleted.
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f "ref=refs/tags/${TAG}" \
+            -f "sha=${COMMIT}" > /dev/null
+          # The tag now exists with no release locking it. Anything that stops
+          # this step from here has to take it back out: the version job reads
+          # the highest tag, so a tag left behind makes the next dispatch work
+          # out the version after this one and skip this number silently.
+          trap 'gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" > /dev/null 2>&1 || true' EXIT
+          # --target is redundant now that the tag exists at the right commit,
+          # and `gh` ignores it for an existing tag. It stays as the statement
+          # of which commit this release is for.
           gh release create "${TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             --target "${COMMIT}" \
             --title "${TAG}" \
             --notes "${NOTES}"
+          # Publishing is what locks the tag, so past this point it must stay.
+          trap - EXIT
