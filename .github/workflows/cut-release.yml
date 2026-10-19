@@ -209,14 +209,38 @@ jobs:
           # there and ignoring --target, which publishes an immutable release
           # against a commit nobody chose. Immutability makes the name
           # unusable afterwards even if the release is deleted.
+          # Between the ref write and the release there is a tag with nothing
+          # locking it, and the version job reads the highest tag, so a tag
+          # left behind makes the next dispatch work out the version after
+          # this one and skip this number silently.
+          #
+          # The cleanup is armed before the write rather than after it. Arming
+          # it after leaves a window, short but real, where the tag exists and
+          # nothing would take it back out. That ordering is only safe because
+          # the cleanup checks that the tag is this run's before removing it,
+          # so the 422 path below, where the tag belongs to someone else, does
+          # not delete their tag. Every check that fails to confirm leaves the
+          # tag alone, including an API error, since a tag left behind costs a
+          # version number and a wrong delete costs a release.
+          #
+          # bash runs an EXIT trap when a signal terminates it, so this covers
+          # a cancelled job as well as a failed command. SIGKILL defeats it,
+          # and nothing here can change that.
+          cleanup() {
+            local ref_sha
+            ref_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq .object.sha 2>/dev/null) || return 0
+            if [ "${ref_sha}" != "${COMMIT}" ]; then
+              return 0
+            fi
+            if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" > /dev/null 2>&1; then
+              return 0
+            fi
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" > /dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
           gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
             -f "ref=refs/tags/${TAG}" \
             -f "sha=${COMMIT}" > /dev/null
-          # The tag now exists with no release locking it. Anything that stops
-          # this step from here has to take it back out: the version job reads
-          # the highest tag, so a tag left behind makes the next dispatch work
-          # out the version after this one and skip this number silently.
-          trap 'gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" > /dev/null 2>&1 || true' EXIT
           # --target is redundant now that the tag exists at the right commit,
           # and `gh` ignores it for an existing tag. It stays as the statement
           # of which commit this release is for.
