@@ -168,10 +168,9 @@ jobs:
             echo "That should not happen on the default branch with an explicit bump." >&2
             exit 1
           fi
-          # A courtesy check, not the guard. It turns a name that is already
-          # taken into a readable error rather than a raw API failure. Claiming
-          # the ref below is what actually settles the name. The call stays out
-          # of an `if` so that a failure of the check itself stops the run.
+          # A courtesy check, not the guard: claiming the ref below settles
+          # the name. Kept out of an `if` so a failure of the check itself
+          # stops the run.
           matches=$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${TAG}" \
             --jq '[.[] | select(.ref == "refs/tags/" + env.TAG)] | length')
           if [ "${matches}" != "0" ]; then
@@ -184,42 +183,33 @@ jobs:
           # taken, the release call publishes against whatever commit that tag
           # points at, and immutability makes that permanent.
           #
-          # Claiming first leaves the tag briefly unlocked, and one left
-          # behind makes the next dispatch skip this version number. So the
-          # cleanup is armed before the claim, and acts only on a claim that
-          # returned. Ownership is recorded rather than read back off the tag,
-          # because a tag that beat us to the name is almost always at this
-          # same commit: every run targets the default-branch tip.
+          # Claiming first leaves the tag briefly unlocked, so a run that stops
+          # in between has to remove it, or the next dispatch skips this
+          # version number. Three things decide whether removing it is safe,
+          # and dropping any one of them deletes a tag this run does not own:
           #
-          # What is left is the one statement between the claim landing and
-          # `claimed=1`, and it fails the safe way. A stray tag costs a version
-          # number, a wrong delete costs a release.
+          #   claimed     this run created the tag. The commit cannot say so,
+          #               because a tag that beat us to the name is almost
+          #               always at this same default-branch tip.
+          #   unmoved     nobody re-pointed it since. `claimed` cannot say so.
+          #   no release  absence confirmed by a listing that succeeded, not
+          #               inferred from a lookup that failed. The release call
+          #               can land while this run dies, so the tag may already
+          #               be locked.
           #
-          # An EXIT trap covers a cancelled job as well as a failed command,
-          # though not a SIGKILL.
+          # The trap is armed before the claim, leaving one statement in which
+          # a kill strands the tag. That is the safe direction: a stray tag
+          # costs a version number, a wrong delete costs a release. An EXIT
+          # trap covers a cancelled job, though not a SIGKILL.
           claimed=0
           cleanup() {
             [ "${claimed}" = 1 ] || return 0
             local ref_sha releases
-            # Both conditions are load-bearing and neither replaces the other.
-            # `claimed` answers whether this run created the tag, which the
-            # commit cannot: a tag that beat us to the name is almost always
-            # at this same commit. The commit answers whether anyone has moved
-            # the tag since, which `claimed` cannot. Dropping either one makes
-            # this destroy a tag it does not own.
             ref_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq .object.sha 2>/dev/null) || return 0
             if [ "${ref_sha}" != "${COMMIT}" ]; then
               return 0
             fi
-            # The release call can land while this run dies before clearing
-            # the trap, so a tag of ours can already be locked. Listing
-            # answers "no release" with an empty result and a success, which
-            # tells a confirmed absence apart from a lookup that failed.
-            # Asking for the release by tag reports both the same way, and
-            # deleting on an unconfirmed absence would strip the tag off a
-            # release that did publish. One page is enough, newest first, and
-            # it keeps this to a bounded number of calls inside whatever
-            # grace period a cancelled job gets.
+            # Newest first, so a release made seconds ago is on the first page.
             releases=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
               --jq '.[] | select(.tag_name == env.TAG) | .id') || return 0
             if [ -n "${releases}" ]; then
