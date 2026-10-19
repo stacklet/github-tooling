@@ -11,7 +11,7 @@ on:
 permissions: {}
 
 jobs:
-  lint:
+  Lint:
     permissions:
       contents: read
     uses: ./.github/workflows/run-script.yml
@@ -26,7 +26,7 @@ jobs:
       run: |
         just lint
 
-  test:
+  Tests:
     permissions:
       contents: read
     uses: ./.github/workflows/run-script.yml

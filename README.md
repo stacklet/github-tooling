@@ -35,7 +35,7 @@ Run a set of commands on the repository, with the required tools installed via `
   Lint:
     permissions:
       contents: read
-    uses: stacklet/github-tooling/.github/workflows/run-script.yml
+    uses: stacklet/github-tooling/.github/workflows/run-script.yml@<commit-sha>
     secrets:
       STEP_SECURITY_API_KEY: ${{ secrets.STEP_SECURITY_API_KEY }}
     with:
