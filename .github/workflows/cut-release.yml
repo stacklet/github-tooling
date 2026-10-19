@@ -200,7 +200,17 @@ jobs:
           claimed=0
           cleanup() {
             [ "${claimed}" = 1 ] || return 0
-            local releases
+            local ref_sha releases
+            # Both conditions are load-bearing and neither replaces the other.
+            # `claimed` answers whether this run created the tag, which the
+            # commit cannot: a tag that beat us to the name is almost always
+            # at this same commit. The commit answers whether anyone has moved
+            # the tag since, which `claimed` cannot. Dropping either one makes
+            # this destroy a tag it does not own.
+            ref_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq .object.sha 2>/dev/null) || return 0
+            if [ "${ref_sha}" != "${COMMIT}" ]; then
+              return 0
+            fi
             # The release call can land while this run dies before clearing
             # the trap, so a tag of ours can already be locked. Listing
             # answers "no release" with an empty result and a success, which
