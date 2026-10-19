@@ -201,8 +201,6 @@ jobs:
           gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
             -f "ref=refs/tags/${TAG}" \
             -f "sha=${COMMIT}" > /dev/null
-          # Redundant once the tag exists, but it states which commit this
-          # release is for.
           gh release create "${TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             --target "${COMMIT}" \
