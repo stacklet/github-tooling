@@ -111,20 +111,6 @@ jobs:
             echo "| Dry run | ${DRY_RUN} |"
           } >> "${GITHUB_STEP_SUMMARY}"
 
-      # Only fires on the first release, where the baseline is 0.0.0. A patch
-      # from there lands v0.0.1 permanently, so this is enforced rather than
-      # left to the input description. Reads `previous_version` rather than
-      # `previous_tag`, which carries the action's tag prefix and would make
-      # this a second copy of a default owned elsewhere.
-      - name: Require the first release to be major
-        if: ${{ steps.version.outputs.previous_version == '0.0.0' && inputs.bump != 'major' }}
-        env:
-          BUMP: ${{ inputs.bump }}
-        run: |
-          echo "This repository has no releases yet, so the first one has to be a" >&2
-          echo "major bump to land v1.0.0. This run asked for ${BUMP}." >&2
-          exit 1
-
   publish:
     needs: version
     # `success()` is implicit here, and it is what keeps the version job's
