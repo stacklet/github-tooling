@@ -1,0 +1,231 @@
+# Cuts a tag and a GitHub release for the repository that calls this workflow.
+# The caller owns the `workflow_dispatch` trigger and the `concurrency` group,
+# which only mean anything on the workflow a person dispatches. The README
+# carries the caller block to copy.
+name: "Cut release"
+
+on:
+  workflow_call:
+    inputs:
+      bump:
+        # `workflow_call` has no choice type, so only the caller's choice list
+        # narrows this. The version job checks the value before acting on it.
+        description: "Which part of the version to raise. One of patch, minor, or major."
+        required: true
+        type: string
+      dry_run:
+        description: "Work out the next version and stop without publishing"
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      STEP_SECURITY_API_KEY:
+        required: false
+
+permissions: {}
+
+jobs:
+  # Split from `publish` so the third-party action never runs under a token
+  # that can write refs. This job reads; only the job below can publish.
+  version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      new_tag: ${{ steps.version.outputs.new_tag }}
+      changelog: ${{ steps.version.outputs.changelog }}
+    env:
+      HARDEN_RUNNER: ${{ secrets.STEP_SECURITY_API_KEY != '' }} # zizmor: ignore[secrets-outside-env]
+    steps:
+      # First, because egress policy only covers what runs after it. This is
+      # the job that runs a third-party action. The publish job runs only `gh`.
+      - name: Harden Runner
+        if: env.HARDEN_RUNNER == 'true'
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          use-policy-store: true
+          api-key: ${{ secrets.STEP_SECURITY_API_KEY }} # zizmor: ignore[secrets-outside-env]
+
+      # The tag action throws on a bump it does not recognise, which is a
+      # confusing place to find out. Checked in the shell rather than an `if:`
+      # because workflow expressions compare case-insensitively, so `Major`
+      # would clear one and then fail inside the action.
+      - name: Check the requested bump
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          case "${BUMP}" in
+            patch | minor | major) ;;
+            *)
+              echo "The bump has to be patch, minor, or major. This run asked for" >&2
+              echo "'${BUMP}'." >&2
+              exit 1
+              ;;
+          esac
+
+      # A dispatch can target any branch, and a release cut from a topic branch
+      # names code that never merged. Immutability makes that permanent.
+      # Reading the branch from the calling repository keeps this right for a
+      # caller that does not use `main`.
+      - name: Refuse to release from anywhere but the default branch
+        if: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          echo "Releases are cut from ${DEFAULT_BRANCH}. This run targeted ${GITHUB_REF}." >&2
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The version comes from the tag history, so all of it has to be here.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Works out the version and stops. Every ref write belongs to the publish
+      # job, so one place owns the tag.
+      - name: Work out the next version
+        id: version
+        uses: mathieudutour/github-tag-action@af99e60ce8132224b8e6ebab5023449fe256ed46 # v7
+        with:
+          github_token: ${{ github.token }}
+          force_bump: ${{ inputs.bump }}
+          push: false
+          # The action tags only its own idea of a release branch, which does
+          # not cover every default branch. The guard above already confines
+          # this to the caller's default branch, so widening it here is what
+          # makes that guard general.
+          release_branches: '.*'
+
+      - name: Report the version
+        env:
+          PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
+          NEW_TAG: ${{ steps.version.outputs.new_tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Previous | ${PREVIOUS_TAG} |"
+            echo "| New | ${NEW_TAG} |"
+            echo "| Dry run | ${DRY_RUN} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      # Only fires on the first release, where the baseline is 0.0.0. A patch
+      # from there lands v0.0.1 permanently, so this is enforced rather than
+      # left to the input description. Reads `previous_version` rather than
+      # `previous_tag`, which carries the action's tag prefix and would make
+      # this a second copy of a default owned elsewhere.
+      - name: Require the first release to be major
+        if: ${{ steps.version.outputs.previous_version == '0.0.0' && inputs.bump != 'major' }}
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          echo "This repository has no releases yet, so the first one has to be a" >&2
+          echo "major bump to land v1.0.0. This run asked for ${BUMP}." >&2
+          exit 1
+
+  publish:
+    needs: version
+    # `success()` is implicit here, and it is what keeps the version job's
+    # guards binding. Spelled out because adding `always()` or a `failure()`
+    # branch later would detach them silently, and that fails open.
+    #
+    # `inputs.dry_run`, not `github.event.inputs.dry_run`. The latter is a
+    # string, so the negation would never hold and this job would never run.
+    if: ${{ success() && !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Both re-run modes go wrong. One recomputes the version and publishes
+      # the one after this. The other replays the old outputs and republishes
+      # the same tag. Dispatch again instead, which arrives at the same number.
+      - name: Refuse a re-run
+        if: ${{ github.run_attempt != 1 }}
+        run: |
+          echo "Attempt ${GITHUB_RUN_ATTEMPT} of this run. Re-running would publish the" >&2
+          echo "version after the one this run was for. Dispatch the workflow again." >&2
+          exit 1
+
+      # No checkout: the release is cut against a commit SHA and carries no
+      # assets. That keeps the job holding `contents: write` free of
+      # third-party actions, which is why it has no Harden Runner step. Without
+      # a checkout `gh` cannot infer the repository, hence `--repo` below.
+      #
+      # zizmor rejects a release action here as work the runner already does,
+      # hence the CLI.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.new_tag }}
+          COMMIT: ${{ github.sha }}
+          NOTES: ${{ needs.version.outputs.changelog }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAG}" ]; then
+            echo "The version job worked out no tag, so there is nothing to publish." >&2
+            echo "That should not happen on the default branch with an explicit bump." >&2
+            exit 1
+          fi
+          # A courtesy check, not the guard: claiming the ref below settles
+          # the name. Kept out of an `if` so a failure of the check itself
+          # stops the run.
+          matches=$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${TAG}" \
+            --jq '[.[] | select(.ref == "refs/tags/" + env.TAG)] | length')
+          if [ "${matches}" != "0" ]; then
+            echo "Tag ${TAG} already exists, so this run would publish a release over" >&2
+            echo "a tag it did not create. Refusing." >&2
+            exit 1
+          fi
+          # Claim the tag ref, then lock it in by publishing the release
+          # against it. The other order fails open: handed a name already
+          # taken, the release call publishes against whatever commit that tag
+          # points at, and immutability makes that permanent.
+          #
+          # Claiming first leaves the tag briefly unlocked, so a run that stops
+          # in between has to remove it, or the next dispatch skips this
+          # version number. Three things decide whether removing it is safe,
+          # and dropping any one of them deletes a tag this run does not own:
+          #
+          #   claimed     this run created the tag. The commit cannot say so,
+          #               because a tag that beat us to the name is almost
+          #               always at this same default-branch tip.
+          #   unmoved     nobody re-pointed it since. `claimed` cannot say so.
+          #   no release  absence confirmed by a listing that succeeded, not
+          #               inferred from a lookup that failed. The release call
+          #               can land while this run dies, so the tag may already
+          #               be locked.
+          #
+          # The trap is armed before the claim, leaving one statement in which
+          # a kill strands the tag. That is the safe direction: a stray tag
+          # costs a version number, a wrong delete costs a release. An EXIT
+          # trap covers a cancelled job, though not a SIGKILL.
+          claimed=0
+          cleanup() {
+            [ "${claimed}" = 1 ] || return 0
+            local ref_sha releases
+            ref_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq .object.sha 2>/dev/null) || return 0
+            if [ "${ref_sha}" != "${COMMIT}" ]; then
+              return 0
+            fi
+            # Newest first, so a release made seconds ago is on the first page.
+            releases=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq '.[] | select(.tag_name == env.TAG) | .id') || return 0
+            if [ -n "${releases}" ]; then
+              return 0
+            fi
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" > /dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f "ref=refs/tags/${TAG}" \
+            -f "sha=${COMMIT}" > /dev/null
+          claimed=1
+          gh release create "${TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${COMMIT}" \
+            --title "${TAG}" \
+            --notes "${NOTES}"
+          # Publishing is what locks the tag, so past this point it must stay.
+          trap - EXIT
