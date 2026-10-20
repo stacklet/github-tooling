@@ -63,11 +63,11 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: Which part of the version to raise. The first release has to be major, because the count starts from 0.0.0.
+        description: Which part of the version to raise.
         required: true
         type: choice
-        default: patch
         options:
+          - (choose one)
           - patch
           - minor
           - major
@@ -95,8 +95,12 @@ jobs:
 
 The workflow refuses to run against anything but the calling repository's default
 branch, refuses any re-run of a run it has already started, and refuses to publish over
-a tag it did not create. A retry means dispatching again. The first release has to be a major bump, because the version
-walk starts from 0.0.0 and a patch from there spends `v0.0.1` permanently.
+a tag it did not create. A retry means dispatching again.
+
+The `bump` dropdown opens on `(choose one)`, which the workflow rejects. The version
+walk starts from 0.0.0, so on a repository with no tags patch opens at `v0.0.1`, minor
+at `v0.1.0` and major at `v1.0.0`. Which of those a repository wants is its own call,
+so the workflow asks rather than assumes.
 
 `STEP_SECURITY_API_KEY` is optional. Without it the Harden Runner step is skipped and
 the rest runs unchanged.

@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: Which part of the version to raise. The first release has to be major, because the count starts from 0.0.0.
+        description: Which part of the version to raise.
         required: true
         type: choice
-        default: patch
         options:
+          - (choose one)
           - patch
           - minor
           - major
