@@ -59,7 +59,11 @@ jobs:
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
 
       - name: Run
-        run: ${{ inputs.run }} # zizmor: ignore[template-injection] caller-provided script
+        # Some tools reject an empty GH_TOKEN (e.g. zizmor), so unset it rather
+        # than leaving it empty.
+        run: | # zizmor: ignore[template-injection] caller-provided script
+          [ -n "$GH_TOKEN" ] || unset GH_TOKEN
+          ${{ inputs.run }}
         env:
           GH_TOKEN: ${{ inputs.github-token && github.token || '' }}
           # Point prek at the pre-commit cache path so the cache step covers both.
