@@ -34,6 +34,11 @@ commits never get one, so a SHA is what names the commit you meant.
 
 Run a set of commands on the repository, with the required tools installed via `mise`.
 
+Tools are read from the standard mise config files (`mise.toml`, `.tool-versions`, ...).
+Set `mise-env` to select a [mise environment](https://mise.jdx.dev/configuration/environments.html)
+via `MISE_ENV`, so that `mise.<env>.toml` files (such as one with CI-only tools) are
+loaded on top of the default config.
+
 
 ```
   Lint:
