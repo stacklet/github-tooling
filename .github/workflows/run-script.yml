@@ -34,6 +34,7 @@ jobs:
     env:
       HARDEN_RUNNER: ${{ secrets.STEP_SECURITY_API_KEY != '' }} # zizmor: ignore[secrets-outside-env]
       MISE_ENV: ${{ inputs.mise-env }}
+      MISE_LOCKED: "1"
     steps:
       - name: Harden Runner
         if: env.HARDEN_RUNNER == 'true'
@@ -53,8 +54,6 @@ jobs:
         with:
           minimum_release_age: 7d
           cache: true
-        env:
-          MISE_LOCKED: "1"
 
       # Always read the cache, it's safe to do so even on untrusted PRs.
       - name: Restore pre-commit cache
