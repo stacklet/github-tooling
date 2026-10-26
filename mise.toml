@@ -5,3 +5,4 @@ uv = "0.13.4"
 
 [settings]
 lockfile = true
+lockfile_platforms = ["linux-x64", "linux-arm64", "macos-x64", "macos-arm64"]
