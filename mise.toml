@@ -8,4 +8,4 @@ lockfile = true
 
 [tasks.lock]
 description = "Update mise.lock for all supported platforms"
-run = "mise lock --platform linux-x64,linux-arm64,macos-x64"
+run = "mise lock --platform linux-x64,linux-arm64,macos-arm64"
