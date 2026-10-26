@@ -18,6 +18,10 @@ on:
         type: boolean
         description: "Expose the job's read-only GitHub token to the script as GH_TOKEN"
         default: false
+      mise-env:
+        type: string
+        description: "Value for MISE_ENV, selecting additional mise.<env>.toml config files"
+        default: ""
     secrets:
       STEP_SECURITY_API_KEY:
         required: false
@@ -29,6 +33,8 @@ jobs:
       contents: read
     env:
       HARDEN_RUNNER: ${{ secrets.STEP_SECURITY_API_KEY != '' }} # zizmor: ignore[secrets-outside-env]
+      MISE_ENV: ${{ inputs.mise-env }}
+      MISE_LOCKED: "1"
     steps:
       - name: Harden Runner
         if: env.HARDEN_RUNNER == 'true'
