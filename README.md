@@ -57,6 +57,32 @@ are loaded on top of the default config.
         just lint
 ```
 
+The job runs with exactly the permissions the caller grants, so grant at least
+`contents: read`.
+
+Set `aws-role` to assume that AWS role through GitHub OIDC before the script runs,
+with `aws-region` if it isn't `us-east-1`. The caller must then grant `id-token: write`
+as well.
+
+Pass `SSH_PRIVATE_KEY` to give the script an SSH key, such as a deploy key that
+pre-commit needs to clone a private hook repository over SSH.
+
+```
+  Lint:
+    permissions:
+      contents: read
+      id-token: write
+    uses: stacklet/github-tooling/.github/workflows/run-script.yml@<commit-sha>
+    secrets:
+      STEP_SECURITY_API_KEY: ${{ secrets.STEP_SECURITY_API_KEY }}
+      SSH_PRIVATE_KEY: ${{ secrets.PRECOMMIT_SSH_KEY }}
+    with:
+      aws-role: arn:aws:iam::123456789012:role/ci
+      pre-commit-cache: true
+      run: |
+        just lint
+```
+
 ### `cut-release`
 
 Works out the next version from the tag history and publishes a GitHub release for it,

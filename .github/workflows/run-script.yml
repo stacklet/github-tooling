@@ -22,17 +22,30 @@ on:
         type: string
         description: "Value for MISE_ENV, selecting additional mise.<env>.toml config files"
         default: ""
+      aws-role:
+        type: string
+        description: "ARN of an AWS role to assume through GitHub OIDC before the script runs. The caller must grant id-token: write"
+        default: ""
+      aws-region:
+        type: string
+        description: "AWS region for the credentials aws-role yields"
+        default: "us-east-1"
     secrets:
       STEP_SECURITY_API_KEY:
         required: false
-permissions: {}
+      SSH_PRIVATE_KEY:
+        description: "SSH private key to install for the script, e.g. a deploy key for cloning a private repository"
+        required: false
+# No permissions here: the job takes exactly what the caller grants. That is
+# contents: read for most callers, plus id-token: write for those passing
+# aws-role. A called workflow cannot be granted more than its caller has, and
+# asking for id-token: write here would fail every caller that doesn't grant it.
 jobs:
   run:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     env:
       HARDEN_RUNNER: ${{ secrets.STEP_SECURITY_API_KEY != '' }} # zizmor: ignore[secrets-outside-env]
+      SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY != '' }} # zizmor: ignore[secrets-outside-env]
       MISE_ENV: ${{ inputs.mise-env }}
       MISE_LOCKED: "1"
     steps:
@@ -48,6 +61,25 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: ${{ inputs.full-git-history && '0' || '1' }}
+
+      - name: Configure AWS credentials
+        if: inputs.aws-role != ''
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
+        with:
+          role-to-assume: ${{ inputs.aws-role }}
+          aws-region: ${{ inputs.aws-region }}
+
+      # The runner's known_hosts already covers github.com. The key goes in a
+      # file of its own, named in ~/.ssh/config, so it works whatever its type.
+      - name: Install SSH key
+        if: env.SSH_KEY == 'true'
+        run: |
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/run-script-key
+          printf 'Host *\n  IdentityFile ~/.ssh/run-script-key\n' >> ~/.ssh/config
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }} # zizmor: ignore[secrets-outside-env]
 
       - name: Install mise
         uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
