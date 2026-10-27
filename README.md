@@ -57,6 +57,11 @@ are loaded on top of the default config.
         just lint
 ```
 
+Set `pre-commit-cache` to keep pre-commit's (or prek's) hook environments between
+runs, and `uv-cache` to keep uv's cache. Both are restored on every run but saved only
+off pull requests, so an untrusted pull request can't write a cache a later trusted run
+restores.
+
 The job runs with exactly the permissions the caller grants, so grant at least
 `contents: read`.
 
