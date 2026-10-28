@@ -58,12 +58,14 @@ are loaded on top of the default config.
 ```
 
 Set `pre-commit-cache` to keep pre-commit's (or prek's) hook environments between
-runs, and `uv-cache` to keep uv's cache. Both are restored on every run but saved only
-off pull requests, so an untrusted pull request can't write a cache a later trusted run
-restores.
+runs, and `uv-cache` to keep uv's cache. Both are saved only off pull requests, so an
+untrusted pull request can't write a cache a later trusted run restores, and restored on
+every run except pull requests from forks of a public repository, since a trusted run
+may have filled them with private packages or hook repositories.
 
-The job runs with exactly the permissions the caller grants, so grant at least
-`contents: read`.
+The job runs with exactly the permissions the caller grants, so grant
+`contents: read` and nothing more (plus `id-token: write` for `aws-role`): with
+`github-token` set, the script gets a token carrying all of them.
 
 Set `aws-role` to assume that AWS role through GitHub OIDC before the script runs,
 with `aws-region` if it isn't `us-east-1`. The caller must then grant `id-token: write`

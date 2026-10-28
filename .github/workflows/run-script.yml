@@ -20,7 +20,7 @@ on:
         default: false
       github-token:
         type: boolean
-        description: "Expose the job's read-only GitHub token to the script as GH_TOKEN"
+        description: "Expose the job's GitHub token to the script as GH_TOKEN. It carries whatever permissions the caller grants, so grant only what the script needs"
         default: false
       mise-env:
         type: string
@@ -44,6 +44,8 @@ on:
 # contents: read for most callers, plus id-token: write for those passing
 # aws-role. A called workflow cannot be granted more than its caller has, and
 # asking for id-token: write here would fail every caller that doesn't grant it.
+# The caller's grant is therefore the only cap on the token github-token
+# exposes, so callers must grant no more than contents: read (and id-token).
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -91,14 +93,18 @@ jobs:
           minimum_release_age: 7d
           cache: true
 
-      # Always read the caches, it's safe to do so even on untrusted PRs.
+      # Caches are restored on every run except pull requests from forks of a
+      # public repository: a trusted run may have filled them with private
+      # artifacts (packages from a private registry, clones of private hook
+      # repositories), which an outsider's script could read and exfiltrate.
+      # Forks of a private repository belong to people who can already read it.
       #
       # Hook environments are built with the toolchains mise installs (Python,
       # Node, ...), so the key covers the mise config and lockfiles and the
       # selected environment as well as the hook pins: a toolchain bump must
       # not restore environments built against the old one.
       - name: Restore pre-commit cache
-        if: inputs.pre-commit-cache
+        if: inputs.pre-commit-cache && !(github.event.pull_request.head.repo.fork && !github.event.repository.private)
         id: pre-commit-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -108,7 +114,7 @@ jobs:
       # uv verifies what it installs against uv.lock's hashes, so a stale entry
       # only costs a download; restore the newest cache when the lock moved.
       - name: Restore uv cache
-        if: inputs.uv-cache
+        if: inputs.uv-cache && !(github.event.pull_request.head.repo.fork && !github.event.repository.private)
         id: uv-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
