@@ -10,29 +10,48 @@ on:
         description: "Restore the pre-commit cache, saving it on non-PR events"
         type: boolean
         default: false
+      uv-cache:
+        description: "Restore uv's cache, saving it on non-PR events"
+        type: boolean
+        default: false
       full-git-history:
         type: boolean
         description: "Whether to fetch full git history rather than just current HEAD"
         default: false
       github-token:
         type: boolean
-        description: "Expose the job's read-only GitHub token to the script as GH_TOKEN"
+        description: "Expose the job's GitHub token to the script as GH_TOKEN. It carries whatever permissions the caller grants, so grant only what the script needs"
         default: false
       mise-env:
         type: string
         description: "Value for MISE_ENV, selecting additional mise.<env>.toml config files"
         default: ""
+      aws-role:
+        type: string
+        description: "ARN of an AWS role to assume through GitHub OIDC before the script runs. The caller must grant id-token: write"
+        default: ""
+      aws-region:
+        type: string
+        description: "AWS region for the credentials aws-role yields"
+        default: "us-east-1"
     secrets:
       STEP_SECURITY_API_KEY:
         required: false
-permissions: {}
+      SSH_PRIVATE_KEY:
+        description: "SSH private key to install for the script, e.g. a deploy key for cloning a private repository"
+        required: false
+# No permissions here: the job takes exactly what the caller grants. That is
+# contents: read for most callers, plus id-token: write for those passing
+# aws-role. A called workflow cannot be granted more than its caller has, and
+# asking for id-token: write here would fail every caller that doesn't grant it.
+# The caller's grant is therefore the only cap on the token github-token
+# exposes, so callers must grant no more than contents: read (and id-token).
 jobs:
   run:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     env:
       HARDEN_RUNNER: ${{ secrets.STEP_SECURITY_API_KEY != '' }} # zizmor: ignore[secrets-outside-env]
+      SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY != '' }} # zizmor: ignore[secrets-outside-env]
       MISE_ENV: ${{ inputs.mise-env }}
       MISE_LOCKED: "1"
     steps:
@@ -49,38 +68,92 @@ jobs:
           persist-credentials: false
           fetch-depth: ${{ inputs.full-git-history && '0' || '1' }}
 
+      - name: Configure AWS credentials
+        if: inputs.aws-role != ''
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
+        with:
+          role-to-assume: ${{ inputs.aws-role }}
+          aws-region: ${{ inputs.aws-region }}
+
+      # The runner's known_hosts already covers github.com. The key goes in a
+      # file of its own, named in ~/.ssh/config, so it works whatever its type.
+      - name: Install SSH key
+        if: env.SSH_KEY == 'true'
+        run: |
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/run-script-key
+          printf 'Host *\n  IdentityFile ~/.ssh/run-script-key\n' >> ~/.ssh/config
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }} # zizmor: ignore[secrets-outside-env]
+
       - name: Install mise
         uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
         with:
           minimum_release_age: 7d
           cache: true
 
-      # Always read the cache, it's safe to do so even on untrusted PRs.
+      # Caches are restored on every run except pull requests from forks of a
+      # public repository: a trusted run may have filled them with private
+      # artifacts (packages from a private registry, clones of private hook
+      # repositories), which an outsider's script could read and exfiltrate.
+      # Forks of a private repository belong to people who can already read it.
+      #
+      # Hook environments are built with the toolchains mise installs (Python,
+      # Node, ...), so the key covers the mise config and lockfiles and the
+      # selected environment as well as the hook pins: a toolchain bump must
+      # not restore environments built against the old one.
       - name: Restore pre-commit cache
-        if: inputs.pre-commit-cache
+        if: inputs.pre-commit-cache && !(github.event.pull_request.head.repo.fork && !github.event.repository.private)
         id: pre-commit-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/pre-commit
-          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          key: pre-commit-${{ runner.os }}-${{ runner.arch }}-${{ inputs.mise-env }}-${{ hashFiles('.pre-commit-config.yaml', 'mise.toml', 'mise.lock', 'mise.*.toml', 'mise.*.lock') }}
+
+      # uv verifies what it installs against uv.lock's hashes, so a stale entry
+      # only costs a download; restore the newest cache when the lock moved.
+      - name: Restore uv cache
+        if: inputs.uv-cache && !(github.event.pull_request.head.repo.fork && !github.event.repository.private)
+        id: uv-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Run
         # Some tools reject an empty GH_TOKEN (e.g. zizmor), so unset it rather
         # than leaving it empty.
         run: | # zizmor: ignore[template-injection] caller-provided script
           [ -n "$GH_TOKEN" ] || unset GH_TOKEN
+          # Point prek at the pre-commit cache path so the cache step covers
+          # both. Exported here because `env:` values don't expand `~`.
+          export PREK_HOME="$HOME/.cache/pre-commit"
           ${{ inputs.run }}
         env:
           GH_TOKEN: ${{ inputs.github-token && github.token || '' }}
-          # Point prek at the pre-commit cache path so the cache step covers both.
-          PREK_HOME: ~/.cache/pre-commit
 
-      # Cache ssave is gated to non-PR events: an untrusted PR run must not be
-      # able to write a hook-environment cache that a later trusted build
-      # restores and executes (cache poisoning).
+      # Cache saves are gated to non-PR events: an untrusted PR run must not be
+      # able to write a cache that a later trusted build restores and executes
+      # (cache poisoning).
       - name: Save pre-commit cache
         if: inputs.pre-commit-cache && github.event_name != 'pull_request' && steps.pre-commit-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/pre-commit
           key: ${{ steps.pre-commit-cache.outputs.cache-primary-key }}
+
+      # Keep only what's slow to rebuild: --ci drops pre-built wheels, which
+      # download again quickly, and keeps wheels built from source.
+      - name: Prune uv cache
+        if: inputs.uv-cache && github.event_name != 'pull_request' && steps.uv-cache.outputs.cache-hit != 'true'
+        run: uv cache prune --ci
+
+      - name: Save uv cache
+        if: inputs.uv-cache && github.event_name != 'pull_request' && steps.uv-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/uv
+          key: ${{ steps.uv-cache.outputs.cache-primary-key }}
